@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# run-opendevin.sh — Lanza OpenDevin con secretos descifrados vía age + sops
+# run-opendevin.sh — Lanza OpenHands con secretos descifrados vía age + sops
 # ============================================================================
 #
 # Requisitos:
@@ -14,12 +14,12 @@
 #   ./scripts/run-opendevin.sh --help       # muestra esta ayuda
 #
 # Variables del .env:
-#   LLM_API_KEY          — API key del LLM (obligatoria)
-#   LLM_BASE_URL         — URL base opcional (ej: para Ollama o proxies)
-#   WORKSPACE_DIR        — directorio a montar en /opt/workspace_base
-#   OPENDOVIN_PORT       — puerto para la UI (default: 3000)
-#   OPENDOVIN_IMAGE      — imagen Docker (default: ghcr.io/opendevin/opendevin:main)
-#   OPENDOVIN_VERSION    — tag de versión (alternativa a OPENDOVIN_IMAGE)
+#   LLM_API_KEY                    — API key del LLM (obligatoria)
+#   LLM_BASE_URL                   — URL base opcional (ej: para Ollama)
+#   OPENHANDS_IMAGE                — imagen Docker (default: docker.openhands.dev/openhands/openhands:1.6)
+#   OPENHANDS_PORT                 — puerto para la UI (default: 3000)
+#   AGENT_SERVER_IMAGE_REPOSITORY  — imagen del agent-server (default: ghcr.io/openhands/agent-server)
+#   AGENT_SERVER_IMAGE_TAG         — tag del agent-server (default: 1.15.0-python)
 # ============================================================================
 
 set -euo pipefail
@@ -28,15 +28,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # ── Configuración por defecto ──────────────────────────────────────────────
-OPENDOVIN_IMAGE="${OPENDOVIN_IMAGE:-ghcr.io/opendevin/opendevin:main}"
-OPENDOVIN_PORT="${OPENDOVIN_PORT:-3000}"
+OPENHANDS_IMAGE="${OPENHANDS_IMAGE:-docker.openhands.dev/openhands/openhands:1.6}"
+OPENHANDS_PORT="${OPENHANDS_PORT:-3000}"
 
 # ── Colores para output ────────────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
 info()  { echo -e "${CYAN}[INFO]${NC}  $*"; }
 ok()    { echo -e "${GREEN}[OK]${NC}    $*"; }
@@ -50,7 +50,7 @@ usage() {
 }
 
 # ── Parseo de argumentos ───────────────────────────────────────────────────
-MODE="encrypted"  # encrypted | dev
+MODE="encrypted"
 for arg in "$@"; do
     case "$arg" in
         --dev)    MODE="dev" ;;
@@ -78,7 +78,6 @@ load_env() {
     # shellcheck disable=SC1090
     source "${env_file}"
 
-    # Validar variables obligatorias
     if [[ -z "${LLM_API_KEY:-}" ]]; then
         error "LLM_API_KEY no está definida en ${env_file}"
         exit 1
@@ -99,7 +98,6 @@ else
         exit 1
     fi
 
-    # Verificar clave age
     if [[ -z "${SOPS_AGE_KEY:-}" && -z "${SOPS_AGE_KEY_FILE:-}" ]]; then
         error "Ni SOPS_AGE_KEY ni SOPS_AGE_KEY_FILE están definidas."
         echo ""
@@ -119,10 +117,12 @@ else
         exit 1
     fi
 
-    # Descifrar a un FD temporal para no escribir en disco
-    ENV_CONTENT="$(sops --decrypt "${ENC_FILE}")"
+    # Descifrar a archivo temporal (bash 3.2 en macOS no soporta source <())
+    ENV_TMP=$(mktemp)
+    trap 'rm -f "${ENV_TMP}"' EXIT
+    sops --decrypt --input-type dotenv --output-type dotenv "${ENC_FILE}" > "${ENV_TMP}"
     # shellcheck disable=SC1090
-    source <(echo "${ENV_CONTENT}")
+    source "${ENV_TMP}"
 
     if [[ -z "${LLM_API_KEY:-}" ]]; then
         error "LLM_API_KEY no está definida en ${ENC_FILE}"
@@ -130,11 +130,6 @@ else
     fi
     ok "Secretos descifrados correctamente desde ${ENC_FILE}"
 fi
-
-# ── WORKSPACE_DIR: por defecto PROJECT_DIR/workspace ───────────────────────
-WORKSPACE_DIR="${WORKSPACE_DIR:-${PROJECT_DIR}/workspace}"
-mkdir -p "${WORKSPACE_DIR}"
-WORKSPACE_DIR="$(cd "${WORKSPACE_DIR}" && pwd)"  # ruta absoluta
 
 # ── Verificar Docker ───────────────────────────────────────────────────────
 if ! command -v docker &>/dev/null; then
@@ -147,15 +142,8 @@ if ! docker info &>/dev/null; then
     exit 1
 fi
 
-# ── Pull de la imagen ──────────────────────────────────────────────────────
-info "Verificando imagen Docker: ${OPENDOVIN_IMAGE}..."
-if ! docker image inspect "${OPENDOVIN_IMAGE}" &>/dev/null; then
-    info "Descargando imagen..."
-    docker pull "${OPENDOVIN_IMAGE}"
-fi
-
 # ── Detener instancia previa si existe ─────────────────────────────────────
-CONTAINER_NAME="opendevin"
+CONTAINER_NAME="openhands-app"
 if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
     warn "Contenedor '${CONTAINER_NAME}' ya está corriendo. Deteniéndolo..."
     docker stop "${CONTAINER_NAME}" &>/dev/null
@@ -166,11 +154,16 @@ fi
 # ── Construir args de Docker ───────────────────────────────────────────────
 DOCKER_ARGS=(
     --name "${CONTAINER_NAME}"
+    --rm
+    --pull=always
     -e LLM_API_KEY
-    -e WORKSPACE_MOUNT_PATH="${WORKSPACE_DIR}"
-    -v "${WORKSPACE_DIR}:/opt/workspace_base"
+    -e AGENT_SERVER_IMAGE_REPOSITORY="${AGENT_SERVER_IMAGE_REPOSITORY:-ghcr.io/openhands/agent-server}"
+    -e AGENT_SERVER_IMAGE_TAG="${AGENT_SERVER_IMAGE_TAG:-1.15.0-python}"
+    -e LOG_ALL_EVENTS=true
     -v /var/run/docker.sock:/var/run/docker.sock
-    -p "${OPENDOVIN_PORT}:3000"
+    -v "${HOME}/.openhands:/.openhands"
+    -p "${OPENHANDS_PORT}:3000"
+    --add-host host.docker.internal:host-gateway
 )
 
 # LLM_BASE_URL opcional
@@ -182,21 +175,20 @@ fi
 # ── Lanzar contenedor ──────────────────────────────────────────────────────
 echo ""
 info "═══════════════════════════════════════════════════════════════"
-info "  Lanzando OpenDevin..."
-info "  Imagen:    ${OPENDOVIN_IMAGE}"
-info "  Puerto:    ${OPENDOVIN_PORT}"
-info "  Workspace: ${WORKSPACE_DIR}"
+info "  Lanzando OpenHands..."
+info "  Imagen:    ${OPENHANDS_IMAGE}"
+info "  Puerto:    ${OPENHANDS_PORT}"
 info "  LLM:       ${LLM_BASE_URL:-OpenAI (por defecto)}"
 info "═══════════════════════════════════════════════════════════════"
 echo ""
 
-docker run "${DOCKER_ARGS[@]}" "${OPENDOVIN_IMAGE}"
+docker run "${DOCKER_ARGS[@]}" "${OPENHANDS_IMAGE}"
 
 # ── Post-ejecución ─────────────────────────────────────────────────────────
 EXIT_CODE=$?
 if [[ $EXIT_CODE -ne 0 ]]; then
-    error "OpenDevin terminó con código de error: ${EXIT_CODE}"
+    error "OpenHands terminó con código de error: ${EXIT_CODE}"
 else
-    ok "OpenDevin se detuvo correctamente"
+    ok "OpenHands se detuvo correctamente"
 fi
 exit $EXIT_CODE
