@@ -22,3 +22,10 @@ workspace/                    # Directorio que OpenDevin modifica
 .opencode/worktrees/
 .opencode/worktrees.db
 .opencode/worktrees.log
+
+# opencode (local, no versionar)
+.opencode/sessions.db
+.opencode/sessions.db-shm
+.opencode/sessions.db-wal
+.opencode/node_modules/
+session-ses_*.md

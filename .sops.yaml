@@ -13,8 +13,8 @@
 # ============================================================================
 
 creation_rules:
-  - path_regex: \.env\.enc$
+  - path_regex: \.env(\.enc)?$
     key_groups:
       - age:
         # Reemplaza con tu clave pública age
-        - "<TU_CLAVE_PUBLICA_AGE>"
+        - "age1whguyfhjmuezf5x0wc24v8hps8s9zdrkrmel3eypcdwjt6p0ep9qf2rn0z"
