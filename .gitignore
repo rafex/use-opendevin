@@ -4,6 +4,7 @@
 
 # ── Secretos ───────────────────────────────────────────────────────────────
 .env  
+.env.enc                      # Cifrado con sops (generado localmente)
 .env.*.enc
 .opencode/
 

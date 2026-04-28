@@ -9,15 +9,15 @@ project_dir := `pwd`
 scripts_dir := project_dir / "scripts"
 env_file := project_dir / ".env"
 env_enc := project_dir / ".env.enc"
-container_name := "opendevin"
+container_name := "openhands-app"
 
 # ── Tareas ─────────────────────────────────────────────────────────────────
 
-# Lanza OpenDevin con secretos cifrados (.env.enc)
+# Lanza OpenHands con secretos cifrados (.env.enc)
 run:
     @{{scripts_dir}}/run-opendevin.sh
 
-# Lanza OpenDevin en modo desarrollo (.env sin cifrar)
+# Lanza OpenHands en modo desarrollo (.env sin cifrar)
 dev:
     @{{scripts_dir}}/run-opendevin.sh --dev
 
@@ -37,7 +37,7 @@ setup:
 check:
     @{{scripts_dir}}/check.sh "{{env_file}}" "{{env_enc}}"
 
-# Sigue los logs del contenedor OpenDevin
+# Sigue los logs del contenedor OpenHands
 logs:
     docker logs -f {{container_name}}
 
