@@ -1,0 +1,20 @@
+# ============================================================================
+# .sops.yaml — Configuración de SOPS para OpenDevin
+# ============================================================================
+# Cifrado con age (https://github.com/FiloSottile/age)
+#
+# 1. Genera tu clave age (si no tienes):
+#    age-keygen -o ~/.config/age/keys.txt
+#
+# 2. Obtén la clave pública:
+#    age-keygen -y ~/.config/age/keys.txt
+#
+# 3. Reemplaza <TU_CLAVE_PUBLICA_AGE> abajo con tu clave pública
+# ============================================================================
+
+creation_rules:
+  - path_regex: \.env\.enc$
+    key_groups:
+      - age:
+        # Reemplaza con tu clave pública age
+        - "<TU_CLAVE_PUBLICA_AGE>"

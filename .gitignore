@@ -1,0 +1,19 @@
+# ============================================================================
+# .gitignore — OpenDeven Script
+# ============================================================================
+
+# ── Secretos ───────────────────────────────────────────────────────────────
+.env                          # Variables de entorno sin cifrar
+.env.*.enc                    # Cifrados con sops (se generan localmente)
+
+# ── Directorio de trabajo de OpenDevin ─────────────────────────────────────
+workspace/                    # Directorio que OpenDevin modifica
+
+# ── Sistema ────────────────────────────────────────────────────────────────
+.DS_Store
+*.swp
+*.swo
+*~
+
+# ── Docker ─────────────────────────────────────────────────────────────────
+.docker/
