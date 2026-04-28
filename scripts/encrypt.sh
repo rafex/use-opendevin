@@ -37,6 +37,6 @@ if ! command -v age &>/dev/null; then
 fi
 
 # ── Cifrado ─────────────────────────────────────────────────────────────────
-sops --encrypt "${ENV_FILE}" > "${ENV_ENC}"
+sops --encrypt --input-type dotenv --output-type dotenv "${ENV_FILE}" > "${ENV_ENC}"
 echo "✅ .env cifrado → ${ENV_ENC}"
 echo "   ⚠️  No subas .env al repositorio (ya está en .gitignore)"

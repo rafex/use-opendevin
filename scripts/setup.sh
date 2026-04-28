@@ -59,7 +59,7 @@ else
     echo "  ✅ .sops.yaml: clave pública configurada"
     echo ""
     echo "  🔐 Cifrando .env..."
-    if sops --encrypt "${ENV_FILE}" > "${ENV_ENC}" 2>/dev/null; then
+    if sops --encrypt --input-type dotenv --output-type dotenv "${ENV_FILE}" > "${ENV_ENC}" 2>/dev/null; then
         echo "  ✅ .env → ${ENV_ENC}"
     else
         echo "  ⚠️  No se pudo cifrar. Revisa: just check"

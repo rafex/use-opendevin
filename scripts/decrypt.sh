@@ -25,5 +25,5 @@ fi
 
 # ── Descifrado ──────────────────────────────────────────────────────────────
 echo "⚠️  Descifrando a ${ENV_FILE}... (nunca subas este archivo al repo)"
-sops --decrypt "${ENV_ENC}" > "${ENV_FILE}"
+sops --decrypt --input-type dotenv --output-type dotenv "${ENV_ENC}" > "${ENV_FILE}"
 echo "✅ .env.enc descifrado → ${ENV_FILE}"
