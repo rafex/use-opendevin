@@ -3,11 +3,12 @@
 # ============================================================================
 
 # ── Secretos ───────────────────────────────────────────────────────────────
-.env                          # Variables de entorno sin cifrar
-.env.*.enc                    # Cifrados con sops (se generan localmente)
+.env  
+.env.*.enc
+.opencode/
 
 # ── Directorio de trabajo de OpenDevin ─────────────────────────────────────
-workspace/                    # Directorio que OpenDevin modifica
+workspace/                   
 
 # ── Sistema ────────────────────────────────────────────────────────────────
 .DS_Store
