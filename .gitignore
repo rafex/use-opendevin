@@ -17,3 +17,8 @@ workspace/                    # Directorio que OpenDevin modifica
 
 # ── Docker ─────────────────────────────────────────────────────────────────
 .docker/
+
+# opencode — worktrees (generados, no committear)
+.opencode/worktrees/
+.opencode/worktrees.db
+.opencode/worktrees.log
