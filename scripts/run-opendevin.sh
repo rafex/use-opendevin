@@ -137,6 +137,39 @@ if ! command -v docker &>/dev/null; then
     exit 1
 fi
 
+# Resolver socket real de Docker (macOS con Podman usa symlinks)
+resolve_socket() {
+    local s="$1" d
+    for _ in 1 2 3 4 5; do
+        if [ -L "${s}" ]; then
+            d=$(readlink "${s}")
+            case "${d}" in
+                /*) s="${d}" ;;
+                *)  s="$(dirname "${s}")/${d}" ;;
+            esac
+        else
+            echo "${s}"
+            return 0
+        fi
+    done
+    echo "${s}"
+}
+
+DOCKER_SOCK=$(resolve_socket "/var/run/docker.sock")
+if [ "${DOCKER_SOCK}" != "/var/run/docker.sock" ]; then
+    info "Socket Docker resuelto: ${DOCKER_SOCK}"
+fi
+
+# Asegurar permisos del socket (Podman en macOS crea socket 600)
+if [ -S "${DOCKER_SOCK}" ]; then
+    SOCK_PERMS=$(stat -f '%Lp' "${DOCKER_SOCK}" 2>/dev/null || echo "0")
+    if [ "${SOCK_PERMS}" != "666" ]; then
+        info "Ajustando permisos del socket (${SOCK_PERMS} → 666)..."
+        chmod 666 "${DOCKER_SOCK}" 2>/dev/null || \
+            warn "No se pudieron cambiar permisos. Prueba: sudo chmod 666 ${DOCKER_SOCK}"
+    fi
+fi
+
 if ! docker info &>/dev/null; then
     error "El daemon de Docker no está corriendo"
     exit 1
