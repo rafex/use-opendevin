@@ -1,6 +1,6 @@
 # Guía de inicio rápido
 
-Ejecuta OpenDevin localmente en menos de 5 minutos.
+Ejecuta OpenHands localmente en menos de 5 minutos.
 
 ## Prerequisitos
 
@@ -9,34 +9,45 @@ Ejecuta OpenDevin localmente en menos de 5 minutos.
 - [sops](https://github.com/getsops/sops) — `brew install sops`
 - [just](https://github.com/casey/just) — `brew install just`
 
-## 1. Configurar entorno
+## 1. Setup automático
 
-Copia la plantilla y completa tu API key:
+Un solo comando configura todo:
 
 ```bash
-cp scripts/.env.template .env
-# Edita .env con tu LLM_API_KEY
+just setup
 ```
 
-## 2. Cifrar secretos (recomendado)
+Esto hace automáticamente:
 
-Genera tu clave age y cifra el archivo:
+| Paso | Acción |
+|------|--------|
+| 1. Archivo de entorno | Copia `scripts/.env.template` → `.env` si no existe |
+| 2. Clave age | Genera `~/.config/age/keys.txt` si no existe |
+| 3. Clave pública | Verifica `.sops.yaml` y **cifra `.env` → `.env.enc`** |
+
+Después de `just setup`, abre `.env` y completa `LLM_API_KEY`:
 
 ```bash
-# Generar clave age (solo la primera vez)
-age-keygen -o ~/.config/age/keys.txt
+$EDITOR .env
+```
 
-# Obtener clave pública y agregarla en .sops.yaml
-age-keygen -y ~/.config/age/keys.txt
+Luego vuelve a cifrar con los valores actualizados:
 
-# Exportar la clave para sops
-export SOPS_AGE_KEY_FILE=~/.config/age/keys.txt
-
-# Cifrar
+```bash
 just encrypt
 ```
 
-## 3. Ejecutar OpenDevin
+## 2. Exportar clave para sops
+
+Agrega esta línea a tu `~/.bashrc` (o `~/.zshrc`):
+
+```bash
+export SOPS_AGE_KEY_FILE="$HOME/.config/age/keys.txt"
+```
+
+Y recarga la terminal o ejecuta `source ~/.bashrc`.
+
+## 3. Ejecutar OpenHands
 
 ```bash
 # Modo seguro (usa .env.enc cifrado)
@@ -54,8 +65,20 @@ Abre [http://localhost:3000](http://localhost:3000) en tu navegador.
 just stop
 ```
 
+## Referencia rápida de comandos
+
+| Comando | Descripción |
+|---------|-------------|
+| `just setup` | Setup inicial completo (template, clave age, cifrado) |
+| `just encrypt` | Cifra `.env` → `.env.enc` |
+| `just decrypt` | Descifra `.env.enc` → `.env` (solo inspección) |
+| `just check` | Verifica prerequisitos |
+| `just run` | Lanza OpenHands (usa `.env.enc` cifrado) |
+| `just dev` | Modo desarrollo (usa `.env` sin cifrar) |
+| `just logs` | Sigue los logs del contenedor |
+| `just stop` | Detiene el contenedor |
+
 ## Siguientes pasos
 
 - [Instalación detallada](SETUP.md) — configuración paso a paso
 - [Modelo de seguridad](SECURITY.md) — cómo funciona age + sops
-- [Referencia de comandos](REFERENCE.md) — todos los comandos disponibles
