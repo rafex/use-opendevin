@@ -11,6 +11,7 @@
 # Uso:
 #   ./scripts/run-opendevin.sh              # usa .env.enc si existe
 #   ./scripts/run-opendevin.sh --dev        # usa .env (sin cifrar, para desarrollo)
+#   ./scripts/run-opendevin.sh --no-pull    # omite docker pull (más rápido si la imagen ya existe)
 #   ./scripts/run-opendevin.sh --help       # muestra esta ayuda
 #
 # Variables del .env:
@@ -51,11 +52,13 @@ usage() {
 
 # ── Parseo de argumentos ───────────────────────────────────────────────────
 MODE="encrypted"
+PULL_POLICY="always"
 for arg in "$@"; do
     case "$arg" in
-        --dev)    MODE="dev" ;;
-        --help|-h) usage ;;
-        *)        error "Argumento desconocido: $arg"; usage ;;
+        --dev)      MODE="dev" ;;
+        --no-pull)  PULL_POLICY="never" ;;
+        --help|-h)  usage ;;
+        *)          error "Argumento desconocido: $arg"; usage ;;
     esac
 done
 
@@ -165,8 +168,11 @@ if [ -S "${DOCKER_SOCK}" ]; then
     SOCK_PERMS=$(stat -f '%Lp' "${DOCKER_SOCK}" 2>/dev/null || echo "0")
     if [ "${SOCK_PERMS}" != "666" ]; then
         info "Ajustando permisos del socket (${SOCK_PERMS} → 666)..."
-        chmod 666 "${DOCKER_SOCK}" 2>/dev/null || \
-            warn "No se pudieron cambiar permisos. Prueba: sudo chmod 666 ${DOCKER_SOCK}"
+        if ! chmod 666 "${DOCKER_SOCK}" 2>/dev/null; then
+            warn "No se pudieron cambiar permisos sin sudo."
+            warn "Ejecuta: sudo chmod 666 ${DOCKER_SOCK}"
+            warn "O añade a tu shell: export DOCKER_HOST=unix://${DOCKER_SOCK}"
+        fi
     fi
 fi
 
@@ -188,12 +194,13 @@ fi
 DOCKER_ARGS=(
     --name "${CONTAINER_NAME}"
     --rm
-    --pull=always
+    --pull="${PULL_POLICY}"
     -e LLM_API_KEY
     -e AGENT_SERVER_IMAGE_REPOSITORY="${AGENT_SERVER_IMAGE_REPOSITORY:-ghcr.io/openhands/agent-server}"
     -e AGENT_SERVER_IMAGE_TAG="${AGENT_SERVER_IMAGE_TAG:-1.15.0-python}"
     -e LOG_ALL_EVENTS=true
-    -v /var/run/docker.sock:/var/run/docker.sock
+    -e DOCKER_HOST="unix:///var/run/docker.sock"
+    -v "${DOCKER_SOCK}:/var/run/docker.sock"
     -v "${HOME}/.openhands:/.openhands"
     -v "${PROJECT_DIR}/config/config.toml:/app/config.toml"
     -p "${OPENHANDS_PORT}:3000"
@@ -212,7 +219,9 @@ info "════════════════════════�
 info "  Lanzando OpenHands..."
 info "  Imagen:    ${OPENHANDS_IMAGE}"
 info "  Puerto:    ${OPENHANDS_PORT}"
-info "  LLM:       ${LLM_BASE_URL:-OpenAI (por defecto)}"
+info "  Config:    ${PROJECT_DIR}/config/config.toml"
+info "  Socket:    ${DOCKER_SOCK}"
+info "  Pull:      ${PULL_POLICY}"
 info "═══════════════════════════════════════════════════════════════"
 echo ""
 
