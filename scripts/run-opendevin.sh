@@ -195,6 +195,7 @@ DOCKER_ARGS=(
     -e LOG_ALL_EVENTS=true
     -v /var/run/docker.sock:/var/run/docker.sock
     -v "${HOME}/.openhands:/.openhands"
+    -v "${PROJECT_DIR}/config/config.toml:/app/config.toml"
     -p "${OPENHANDS_PORT}:3000"
     --add-host host.docker.internal:host-gateway
 )
