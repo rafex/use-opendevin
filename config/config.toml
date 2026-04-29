@@ -1,31 +1,11 @@
-[core]
-workspace_dir = "./workspace"
-log_level = "info"
-
 [llm]
-provider = "openai"
 model = "deepseek-v4-flash"
 base_url = "https://api.deepseek.com"
-api_key = "ENV:DEEPSEEK_API_KEY"
+api_key = "ENV:LLM_API_KEY"
 temperature = 0.4
-max_tokens = 4096
-
-[tools]
-enable_shell = true
-enable_file_editor = true
-enable_browser = true
-enable_git = true
+max_output_tokens = 4096
 
 [sandbox]
-enabled = true
-timeout_seconds = 300
-max_memory_mb = 1024
-
-[memory]
-enabled = true
-max_messages = 100
-persist = true
-
-[planner]
-enabled = true
-max_steps = 20
+timeout = 300
+keep_runtime_alive = false
+rm_all_containers = false
