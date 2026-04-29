@@ -3,8 +3,8 @@
 # ============================================================================
 
 # ── Secretos ───────────────────────────────────────────────────────────────
-.env  
-.env.enc                      # Cifrado con sops (generado localmente)
+.env
+# .env.enc se versiona cifrado con sops+age (NO ignorar)
 .env.*.enc
 .opencode/
 
