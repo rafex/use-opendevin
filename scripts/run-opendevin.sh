@@ -198,26 +198,81 @@ if [[ "${IS_PODMAN}" == "true" ]]; then
         fi
         DOCKER_CONN_INFO="socket  ${DOCKER_SOCK_MOUNT}"
     else
-        # ── Podman rootless: virtiofs no puede montar sockets Unix activos ─
-        # Solución: exponer la API de Podman sobre TCP para que el contenedor
-        # pueda conectarse via red (host.docker.internal) sin necesitar el
-        # socket montado. 'podman system service' actúa como proxy a la VM.
+        # ── Podman rootless: virtiofs no puede transportar sockets Unix ────
+        # El socket macOS (/var/run/docker.sock) funciona perfectamente en el
+        # host macOS, pero virtiofs no puede representarlo como kernel object
+        # dentro de la VM → PermissionError al hacer connect().
+        #
+        # Solución: levantar un proxy TCP en macOS que puentea
+        #   /var/run/docker.sock  ←→  0.0.0.0:PODMAN_API_PORT
+        # El contenedor se conecta via red (host.docker.internal:PORT), sin
+        # necesitar socket montado.
+        #
+        # Jerarquía de implementaciones (sin dependencias extra):
+        #   1. socat   — si está instalado (brew install socat)
+        #   2. Python3 — siempre disponible en macOS
         info "Motor detectado: Podman (rootless)"
-        info "Iniciando Podman API TCP en 0.0.0.0:${PODMAN_API_PORT}..."
-        podman system service --time=0 "tcp:0.0.0.0:${PODMAN_API_PORT}" &
-        PODMAN_SVC_PID=$!
+        info "Iniciando proxy TCP ${DOCKER_SOCK_MOUNT} → 0.0.0.0:${PODMAN_API_PORT}..."
 
-        # Esperar a que el servicio esté listo (máx 5 s)
+        if command -v socat &>/dev/null; then
+            socat "TCP-LISTEN:${PODMAN_API_PORT},reuseaddr,fork,bind=0.0.0.0" \
+                  "UNIX-CONNECT:${DOCKER_SOCK_MOUNT}" &
+            PODMAN_SVC_PID=$!
+        else
+            # Proxy Python3 inline — relay bidireccional TCP ↔ Unix socket
+            BRIDGE_PY="/tmp/podman-bridge-$$.py"
+            cat > "${BRIDGE_PY}" << 'PYEOF'
+import socket, threading, sys
+
+def relay(src, dst):
+    try:
+        while True:
+            data = src.recv(65536)
+            if not data:
+                break
+            dst.sendall(data)
+    except Exception:
+        pass
+    finally:
+        for s in (src, dst):
+            try: s.shutdown(socket.SHUT_RDWR)
+            except Exception: pass
+            try: s.close()
+            except Exception: pass
+
+sock_path = sys.argv[1]
+tcp_port  = int(sys.argv[2])
+srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+srv.bind(('0.0.0.0', tcp_port))
+srv.listen(50)
+while True:
+    conn, _ = srv.accept()
+    unix_s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        unix_s.connect(sock_path)
+    except Exception:
+        conn.close()
+        continue
+    threading.Thread(target=relay, args=(conn, unix_s),  daemon=True).start()
+    threading.Thread(target=relay, args=(unix_s, conn),  daemon=True).start()
+PYEOF
+            python3 "${BRIDGE_PY}" "${DOCKER_SOCK_MOUNT}" "${PODMAN_API_PORT}" &
+            PODMAN_SVC_PID=$!
+            rm -f "${BRIDGE_PY}"   # el proceso ya arrancó; se puede borrar
+        fi
+
+        # Esperar a que el proxy esté listo (máx 5 s)
         local_waited=0
         until curl -sf "http://127.0.0.1:${PODMAN_API_PORT}/_ping" &>/dev/null; do
             sleep 1
             local_waited=$((local_waited + 1))
             if [[ ${local_waited} -ge 5 ]]; then
-                error "El servicio Podman TCP no respondió en 5 segundos"
+                error "El proxy TCP no respondió en 5 segundos (puerto ${PODMAN_API_PORT})"
                 exit 1
             fi
         done
-        ok "Podman API TCP escuchando en puerto ${PODMAN_API_PORT}"
+        ok "Proxy TCP escuchando en 0.0.0.0:${PODMAN_API_PORT}"
         USE_TCP_DOCKER=true
         DOCKER_CONN_INFO="tcp     host.docker.internal:${PODMAN_API_PORT}"
     fi
