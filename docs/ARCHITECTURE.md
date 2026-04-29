@@ -44,10 +44,10 @@ El `Makefile` existe solo por política de arquitectura. Este proyecto no requie
 Script bash que orquesta todo el proceso:
 
 1. **Carga de secretos**: descifra `.env.enc` con sops+age o lee `.env` directo
-2. **Validación**: verifica Docker, imagen, variables obligatorias
+2. **Validación**: verifica Docker/Podman, variables obligatorias
 3. **Ejecución**: construye y lanza el contenedor con los parámetros correctos
 
-`config/config.toml` se monta en `/app/config.toml` dentro del contenedor — ruta relativa desde la que OpenHands busca el archivo al arrancar.
+La configuración del LLM se pasa como variables de entorno (`LLM_MODEL`, `LLM_BASE_URL`, etc.). OpenHands V1 ya no usa `config.toml` — el estado persiste en `~/.openhands` y puede editarse desde la UI (Settings).
 
 ### 4. Gestión de secretos — age + sops
 
@@ -80,8 +80,6 @@ use-opendevin/
 ├── Justfile             ← task runner (uso diario)
 ├── Makefile             ← build system (CI/CD)
 ├── README.md            ← índice de documentación
-├── config/
-│   └── config.toml      ← configuración de OpenHands (LLM, sandbox)
 ├── docs/
 │   ├── QUICKSTART.md    ← inicio rápido (5 min)
 │   ├── SETUP.md         ← instalación detallada
@@ -89,7 +87,7 @@ use-opendevin/
 │   ├── REFERENCE.md     ← referencia de comandos
 │   └── ARCHITECTURE.md  ← este documento
 ├── scripts/
-│   ├── .env.template    ← plantilla de variables
+│   ├── .env.template    ← plantilla de variables (LLM, sandbox, puertos)
 │   ├── check.sh         ← verificación de prerequisitos
 │   ├── decrypt.sh       ← descifrado .env.enc → .env
 │   ├── encrypt.sh       ← cifrado .env → .env.enc
