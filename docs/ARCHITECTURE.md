@@ -47,6 +47,8 @@ Script bash que orquesta todo el proceso:
 2. **Validación**: verifica Docker, imagen, variables obligatorias
 3. **Ejecución**: construye y lanza el contenedor con los parámetros correctos
 
+`config/config.toml` se monta en `/app/config.toml` dentro del contenedor — ruta relativa desde la que OpenHands busca el archivo al arrancar.
+
 ### 4. Gestión de secretos — age + sops
 
 - **age**: cifrado asimétrico (clave pública para cifrar, privada para descifrar)
@@ -72,20 +74,28 @@ Makefile **no** ejecuta tareas de desarrollo. Justfile **no** ejecuta builds. Es
 
 ```
 use-opendevin/
-├── .gitignore           ← ignora secretos y workspace
+├── .gitignore           ← ignora secretos sin cifrar y workspace
 ├── .sops.yaml           ← configuración de cifrado
+├── .env.enc             ← secretos cifrados (versionado)
 ├── Justfile             ← task runner (uso diario)
 ├── Makefile             ← build system (CI/CD)
 ├── README.md            ← índice de documentación
+├── config/
+│   └── config.toml      ← configuración de OpenHands (LLM, sandbox)
 ├── docs/
 │   ├── QUICKSTART.md    ← inicio rápido (5 min)
 │   ├── SETUP.md         ← instalación detallada
 │   ├── SECURITY.md      ← modelo de seguridad
 │   ├── REFERENCE.md     ← referencia de comandos
 │   └── ARCHITECTURE.md  ← este documento
-└── scripts/
-    ├── .env.template    ← plantilla de variables
-    └── run-opendevin.sh ← script de lanzamiento
+├── scripts/
+│   ├── .env.template    ← plantilla de variables
+│   ├── check.sh         ← verificación de prerequisitos
+│   ├── decrypt.sh       ← descifrado .env.enc → .env
+│   ├── encrypt.sh       ← cifrado .env → .env.enc
+│   ├── run-opendevin.sh ← script de lanzamiento principal
+│   └── setup.sh         ← configuración inicial guiada
+└── workspace/           ← directorio de trabajo (ignorado en git)
 ```
 
 ---
