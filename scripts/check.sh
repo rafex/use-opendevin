@@ -12,6 +12,9 @@ set -euo pipefail
 # ── Argumentos ──────────────────────────────────────────────────────────────
 ENV_FILE="${1:?Uso: check.sh <env_file> <env_enc>}"
 ENV_ENC="${2:?Uso: check.sh <env_file> <env_enc>}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+CONFIG_TOML="${PROJECT_DIR}/config/config.toml"
 
 echo "🔍 Verificando prerequisitos..."
 echo ""
@@ -36,4 +39,10 @@ fi
 
 if [ -f "${ENV_FILE}" ]; then
     echo "  ⚠️  .env: existe (no cifrado — solo para --dev)"
+fi
+
+if [ -f "${CONFIG_TOML}" ]; then
+    echo "  ✅ config/config.toml: existe"
+else
+    echo "  ❌ config/config.toml: NO ENCONTRADO (requerido para lanzar OpenHands)"
 fi
