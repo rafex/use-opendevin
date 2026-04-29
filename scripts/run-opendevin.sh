@@ -140,45 +140,56 @@ if ! command -v docker &>/dev/null; then
     exit 1
 fi
 
-# Resolver socket real de Docker (macOS con Podman usa symlinks)
-resolve_socket() {
-    local s="$1" d
-    for _ in 1 2 3 4 5; do
-        if [ -L "${s}" ]; then
-            d=$(readlink "${s}")
-            case "${d}" in
-                /*) s="${d}" ;;
-                *)  s="$(dirname "${s}")/${d}" ;;
-            esac
+# ── Gestión del socket Docker/Podman ──────────────────────────────────────
+# Siempre usamos /var/run/docker.sock como referencia de montaje.
+# En macOS+Podman este path es un symlink gestionado por Podman Desktop
+# que apunta al socket activo de la VM. Resolverlo en tiempo de script
+# produce un path que puede quedar obsoleto si la VM se reinicia.
+# Dejamos que Podman resuelva el symlink en el momento del `docker run`.
+DOCKER_SOCK_MOUNT="/var/run/docker.sock"
+
+# Asegurar permisos del socket (Podman en macOS crea socket 600).
+# chmod sobre el symlink lo aplica al socket real activo.
+fix_socket_perms() {
+    local target
+    # Seguir el symlink manualmente para leer permisos del archivo real
+    target=$(readlink -f "${DOCKER_SOCK_MOUNT}" 2>/dev/null || echo "${DOCKER_SOCK_MOUNT}")
+    local perms
+    perms=$(stat -f '%Lp' "${target}" 2>/dev/null || echo "0")
+    if [ "${perms}" != "666" ]; then
+        info "Ajustando permisos del socket (${perms} → 666): ${target}"
+        if chmod 666 "${target}" 2>/dev/null; then
+            ok "Permisos ajustados correctamente"
         else
-            echo "${s}"
-            return 0
-        fi
-    done
-    echo "${s}"
-}
-
-DOCKER_SOCK=$(resolve_socket "/var/run/docker.sock")
-if [ "${DOCKER_SOCK}" != "/var/run/docker.sock" ]; then
-    info "Socket Docker resuelto: ${DOCKER_SOCK}"
-fi
-
-# Asegurar permisos del socket (Podman en macOS crea socket 600)
-if [ -S "${DOCKER_SOCK}" ]; then
-    SOCK_PERMS=$(stat -f '%Lp' "${DOCKER_SOCK}" 2>/dev/null || echo "0")
-    if [ "${SOCK_PERMS}" != "666" ]; then
-        info "Ajustando permisos del socket (${SOCK_PERMS} → 666)..."
-        if ! chmod 666 "${DOCKER_SOCK}" 2>/dev/null; then
             warn "No se pudieron cambiar permisos sin sudo."
-            warn "Ejecuta: sudo chmod 666 ${DOCKER_SOCK}"
-            warn "O añade a tu shell: export DOCKER_HOST=unix://${DOCKER_SOCK}"
+            warn "Ejecuta antes de lanzar: sudo chmod 666 ${target}"
+            warn "O expón el socket con: export DOCKER_HOST=unix://${target}"
         fi
     fi
+}
+
+if [ -e "${DOCKER_SOCK_MOUNT}" ]; then
+    fix_socket_perms
+else
+    error "Socket Docker no encontrado en ${DOCKER_SOCK_MOUNT}"
+    error "Asegúrate de que Docker/Podman Desktop esté corriendo"
+    exit 1
 fi
 
 if ! docker info &>/dev/null; then
     error "El daemon de Docker no está corriendo"
     exit 1
+fi
+
+# ── Detectar motor de contenedores (Docker vs Podman) ─────────────────────
+# Podman rootless en macOS bloquea el acceso al socket desde el contenedor
+# incluso con permisos 666, debido al mapeo de uid y etiquetas SELinux.
+# La solución es --security-opt label=disable (desactiva SELinux en Podman;
+# Docker lo ignora silenciosamente al no tener SELinux activo).
+EXTRA_SECURITY_OPTS=()
+if docker version 2>/dev/null | grep -qi 'podman'; then
+    info "Motor detectado: Podman — aplicando --security-opt label=disable"
+    EXTRA_SECURITY_OPTS=(--security-opt label=disable)
 fi
 
 # ── Detener instancia previa si existe ─────────────────────────────────────
@@ -195,12 +206,13 @@ DOCKER_ARGS=(
     --name "${CONTAINER_NAME}"
     --rm
     --pull="${PULL_POLICY}"
+    ${EXTRA_SECURITY_OPTS[@]+"${EXTRA_SECURITY_OPTS[@]}"}
     -e LLM_API_KEY
     -e AGENT_SERVER_IMAGE_REPOSITORY="${AGENT_SERVER_IMAGE_REPOSITORY:-ghcr.io/openhands/agent-server}"
     -e AGENT_SERVER_IMAGE_TAG="${AGENT_SERVER_IMAGE_TAG:-1.15.0-python}"
     -e LOG_ALL_EVENTS=true
     -e DOCKER_HOST="unix:///var/run/docker.sock"
-    -v "${DOCKER_SOCK}:/var/run/docker.sock"
+    -v "${DOCKER_SOCK_MOUNT}:/var/run/docker.sock"
     -v "${HOME}/.openhands:/.openhands"
     -v "${PROJECT_DIR}/config/config.toml:/app/config.toml"
     -p "${OPENHANDS_PORT}:3000"
@@ -220,7 +232,7 @@ info "  Lanzando OpenHands..."
 info "  Imagen:    ${OPENHANDS_IMAGE}"
 info "  Puerto:    ${OPENHANDS_PORT}"
 info "  Config:    ${PROJECT_DIR}/config/config.toml"
-info "  Socket:    ${DOCKER_SOCK}"
+info "  Socket:    ${DOCKER_SOCK_MOUNT}"
 info "  Pull:      ${PULL_POLICY}"
 info "═══════════════════════════════════════════════════════════════"
 echo ""
