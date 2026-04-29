@@ -292,6 +292,13 @@ else
     DOCKER_CONN_INFO="socket  ${DOCKER_SOCK_MOUNT}"
 fi
 
+# ── Verificar directorio de estado ────────────────────────────────────────
+if [[ ! -d "${HOME}/.openhands" ]]; then
+    error "Directorio de estado no encontrado: ~/.openhands"
+    error "Ejecuta 'just setup' antes de lanzar por primera vez"
+    exit 1
+fi
+
 # ── Detener instancia previa si existe ─────────────────────────────────────
 CONTAINER_NAME="openhands-app"
 if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then

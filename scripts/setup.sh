@@ -67,8 +67,19 @@ else
 fi
 echo ""
 
-# ── Paso 4: Siguientes pasos ────────────────────────────────────────────────
-echo "━━━ Paso 4: Siguientes pasos ━━━"
+# ── Paso 4: Directorio de estado de OpenHands ──────────────────────────────
+echo "━━━ Paso 4: Directorio de estado ━━━"
+if [ ! -d "${HOME}/.openhands" ]; then
+    echo "  📁 Creando ~/.openhands..."
+    mkdir -p "${HOME}/.openhands"
+    echo "  ✅ Creado: ~/.openhands"
+else
+    echo "  ✅ ~/.openhands ya existe"
+fi
+echo ""
+
+# ── Paso 5: Siguientes pasos ────────────────────────────────────────────────
+echo "━━━ Paso 5: Siguientes pasos ━━━"
 echo "  • just run     — Inicia OpenDevin (usa .env.enc)"
 echo "  • just dev     — Modo desarrollo (usa .env sin cifrar)"
 echo "  • just check   — Verifica prerequisitos"

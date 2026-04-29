@@ -44,5 +44,5 @@ STATE_DIR="${HOME}/.openhands"
 if [ -d "${STATE_DIR}" ]; then
     echo "  ✅ ~/.openhands: directorio de estado existe"
 else
-    echo "  ℹ️  ~/.openhands: se creará al primer arranque (configurar LLM desde la UI)"
+    echo "  ❌ ~/.openhands: no encontrado (ejecuta 'just setup' para crearlo)"
 fi
