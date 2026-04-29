@@ -6,7 +6,7 @@
 # Requisitos:
 #   - age (https://github.com/FiloSottile/age)
 #   - sops (https://github.com/getsops/sops)
-#   - Docker
+#   - Docker o Podman Desktop
 #
 # Uso:
 #   ./scripts/run-opendevin.sh              # usa .env.enc si existe
@@ -21,6 +21,7 @@
 #   OPENHANDS_PORT                 — puerto para la UI (default: 3000)
 #   AGENT_SERVER_IMAGE_REPOSITORY  — imagen del agent-server (default: ghcr.io/openhands/agent-server)
 #   AGENT_SERVER_IMAGE_TAG         — tag del agent-server (default: 1.15.0-python)
+#   PODMAN_API_PORT                — puerto TCP para API de Podman rootless (default: 12375)
 # ============================================================================
 
 set -euo pipefail
@@ -31,6 +32,17 @@ PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # ── Configuración por defecto ──────────────────────────────────────────────
 OPENHANDS_IMAGE="${OPENHANDS_IMAGE:-docker.openhands.dev/openhands/openhands:1.6}"
 OPENHANDS_PORT="${OPENHANDS_PORT:-3000}"
+PODMAN_API_PORT="${PODMAN_API_PORT:-12375}"
+
+# ── Estado global para cleanup ─────────────────────────────────────────────
+ENV_TMP=""
+PODMAN_SVC_PID=""
+
+cleanup() {
+    [[ -n "${PODMAN_SVC_PID}" ]] && kill "${PODMAN_SVC_PID}" 2>/dev/null || true
+    [[ -n "${ENV_TMP}" ]]        && rm -f "${ENV_TMP}"                   || true
+}
+trap cleanup EXIT
 
 # ── Colores para output ────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -122,7 +134,6 @@ else
 
     # Descifrar a archivo temporal (bash 3.2 en macOS no soporta source <())
     ENV_TMP=$(mktemp)
-    trap 'rm -f "${ENV_TMP}"' EXIT
     sops --decrypt --input-type dotenv --output-type dotenv "${ENC_FILE}" > "${ENV_TMP}"
     # shellcheck disable=SC1090
     source "${ENV_TMP}"
@@ -140,37 +151,9 @@ if ! command -v docker &>/dev/null; then
     exit 1
 fi
 
-# ── Gestión del socket Docker/Podman ──────────────────────────────────────
-# Siempre usamos /var/run/docker.sock como referencia de montaje.
-# En macOS+Podman este path es un symlink gestionado por Podman Desktop
-# que apunta al socket activo de la VM. Resolverlo en tiempo de script
-# produce un path que puede quedar obsoleto si la VM se reinicia.
-# Dejamos que Podman resuelva el symlink en el momento del `docker run`.
 DOCKER_SOCK_MOUNT="/var/run/docker.sock"
 
-# Asegurar permisos del socket (Podman en macOS crea socket 600).
-# chmod sobre el symlink lo aplica al socket real activo.
-fix_socket_perms() {
-    local target
-    # Seguir el symlink manualmente para leer permisos del archivo real
-    target=$(readlink -f "${DOCKER_SOCK_MOUNT}" 2>/dev/null || echo "${DOCKER_SOCK_MOUNT}")
-    local perms
-    perms=$(stat -f '%Lp' "${target}" 2>/dev/null || echo "0")
-    if [ "${perms}" != "666" ]; then
-        info "Ajustando permisos del socket (${perms} → 666): ${target}"
-        if chmod 666 "${target}" 2>/dev/null; then
-            ok "Permisos ajustados correctamente"
-        else
-            warn "No se pudieron cambiar permisos sin sudo."
-            warn "Ejecuta antes de lanzar: sudo chmod 666 ${target}"
-            warn "O expón el socket con: export DOCKER_HOST=unix://${target}"
-        fi
-    fi
-}
-
-if [ -e "${DOCKER_SOCK_MOUNT}" ]; then
-    fix_socket_perms
-else
+if [ ! -e "${DOCKER_SOCK_MOUNT}" ]; then
     error "Socket Docker no encontrado en ${DOCKER_SOCK_MOUNT}"
     error "Asegúrate de que Docker/Podman Desktop esté corriendo"
     exit 1
@@ -182,14 +165,76 @@ if ! docker info &>/dev/null; then
 fi
 
 # ── Detectar motor de contenedores (Docker vs Podman) ─────────────────────
-# Podman rootless en macOS bloquea el acceso al socket desde el contenedor
-# incluso con permisos 666, debido al mapeo de uid y etiquetas SELinux.
-# La solución es --security-opt label=disable (desactiva SELinux en Podman;
-# Docker lo ignora silenciosamente al no tener SELinux activo).
+# Podman se detecta por el campo 'buildahVersion' en `docker info`.
 EXTRA_SECURITY_OPTS=()
-if docker version 2>/dev/null | grep -qi 'podman'; then
-    info "Motor detectado: Podman — aplicando --security-opt label=disable"
+IS_PODMAN=false
+USE_TCP_DOCKER=false
+DOCKER_CONN_INFO=""   # se muestra en el banner final
+
+if docker info 2>/dev/null | grep -q 'buildahVersion'; then
+    IS_PODMAN=true
+fi
+
+if [[ "${IS_PODMAN}" == "true" ]]; then
+    # --security-opt label=disable es necesario en todos los modos Podman
+    # (evita que SELinux bloquee accesos del sandbox)
     EXTRA_SECURITY_OPTS=(--security-opt label=disable)
+
+    PODMAN_ROOTFUL=$(podman machine inspect --format '{{.Rootful}}' 2>/dev/null || echo "unknown")
+
+    if [[ "${PODMAN_ROOTFUL}" == "true" ]]; then
+        # ── Podman rootful: socket Unix funciona directamente ──────────────
+        info "Motor detectado: Podman (rootful)"
+        local_target=$(readlink -f "${DOCKER_SOCK_MOUNT}" 2>/dev/null || echo "${DOCKER_SOCK_MOUNT}")
+        local_perms=$(stat -f '%Lp' "${local_target}" 2>/dev/null || echo "0")
+        if [[ "${local_perms}" != "666" ]]; then
+            info "Ajustando permisos del socket (${local_perms} → 666): ${local_target}"
+            if chmod 666 "${local_target}" 2>/dev/null; then
+                ok "Permisos ajustados correctamente"
+            else
+                warn "No se pudieron cambiar permisos sin sudo."
+                warn "Ejecuta antes de lanzar: sudo chmod 666 ${local_target}"
+            fi
+        fi
+        DOCKER_CONN_INFO="socket  ${DOCKER_SOCK_MOUNT}"
+    else
+        # ── Podman rootless: virtiofs no puede montar sockets Unix activos ─
+        # Solución: exponer la API de Podman sobre TCP para que el contenedor
+        # pueda conectarse via red (host.docker.internal) sin necesitar el
+        # socket montado. 'podman system service' actúa como proxy a la VM.
+        info "Motor detectado: Podman (rootless)"
+        info "Iniciando Podman API TCP en 0.0.0.0:${PODMAN_API_PORT}..."
+        podman system service --time=0 "tcp:0.0.0.0:${PODMAN_API_PORT}" &
+        PODMAN_SVC_PID=$!
+
+        # Esperar a que el servicio esté listo (máx 5 s)
+        local_waited=0
+        until curl -sf "http://127.0.0.1:${PODMAN_API_PORT}/_ping" &>/dev/null; do
+            sleep 1
+            local_waited=$((local_waited + 1))
+            if [[ ${local_waited} -ge 5 ]]; then
+                error "El servicio Podman TCP no respondió en 5 segundos"
+                exit 1
+            fi
+        done
+        ok "Podman API TCP escuchando en puerto ${PODMAN_API_PORT}"
+        USE_TCP_DOCKER=true
+        DOCKER_CONN_INFO="tcp     host.docker.internal:${PODMAN_API_PORT}"
+    fi
+else
+    # ── Docker nativo: arreglar permisos del socket si es necesario ────────
+    local_target=$(readlink -f "${DOCKER_SOCK_MOUNT}" 2>/dev/null || echo "${DOCKER_SOCK_MOUNT}")
+    local_perms=$(stat -f '%Lp' "${local_target}" 2>/dev/null || echo "0")
+    if [[ "${local_perms}" != "666" ]]; then
+        info "Ajustando permisos del socket (${local_perms} → 666): ${local_target}"
+        if chmod 666 "${local_target}" 2>/dev/null; then
+            ok "Permisos ajustados correctamente"
+        else
+            warn "No se pudieron cambiar permisos sin sudo."
+            warn "Ejecuta: sudo chmod 666 ${local_target}"
+        fi
+    fi
+    DOCKER_CONN_INFO="socket  ${DOCKER_SOCK_MOUNT}"
 fi
 
 # ── Detener instancia previa si existe ─────────────────────────────────────
@@ -197,7 +242,7 @@ CONTAINER_NAME="openhands-app"
 if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
     warn "Contenedor '${CONTAINER_NAME}' ya está corriendo. Deteniéndolo..."
     docker stop "${CONTAINER_NAME}" &>/dev/null
-    docker rm "${CONTAINER_NAME}" &>/dev/null
+    docker rm   "${CONTAINER_NAME}" &>/dev/null
     ok "Contenedor anterior detenido y eliminado"
 fi
 
@@ -211,19 +256,30 @@ DOCKER_ARGS=(
     -e AGENT_SERVER_IMAGE_REPOSITORY="${AGENT_SERVER_IMAGE_REPOSITORY:-ghcr.io/openhands/agent-server}"
     -e AGENT_SERVER_IMAGE_TAG="${AGENT_SERVER_IMAGE_TAG:-1.15.0-python}"
     -e LOG_ALL_EVENTS=true
-    -e DOCKER_HOST="unix:///var/run/docker.sock"
-    -v "${DOCKER_SOCK_MOUNT}:/var/run/docker.sock"
     -v "${HOME}/.openhands:/.openhands"
-    -v "${PROJECT_DIR}/config/config.toml:/app/config.toml"
     -p "${OPENHANDS_PORT}:3000"
     --add-host host.docker.internal:host-gateway
 )
 
-# LLM_BASE_URL opcional
-if [[ -n "${LLM_BASE_URL:-}" ]]; then
-    DOCKER_ARGS+=(-e LLM_BASE_URL)
-    info "Usando LLM_BASE_URL: ${LLM_BASE_URL}"
+if [[ "${USE_TCP_DOCKER}" == "true" ]]; then
+    # Podman rootless: conectar via TCP, sin montar socket
+    DOCKER_ARGS+=(-e DOCKER_HOST="tcp://host.docker.internal:${PODMAN_API_PORT}")
+else
+    # Docker o Podman rootful: montar socket Unix
+    DOCKER_ARGS+=(
+        -e DOCKER_HOST="unix:///var/run/docker.sock"
+        -v "${DOCKER_SOCK_MOUNT}:/var/run/docker.sock"
+    )
 fi
+
+# ── Variables LLM opcionales ───────────────────────────────────────────────
+# LLM_MODEL y LLM_BASE_URL se pueden configurar también desde la UI de
+# OpenHands (Settings). Si están definidas en .env, tienen precedencia.
+[[ -n "${LLM_MODEL:-}"            ]] && DOCKER_ARGS+=(-e LLM_MODEL)            && info "LLM_MODEL:             ${LLM_MODEL}"
+[[ -n "${LLM_BASE_URL:-}"         ]] && DOCKER_ARGS+=(-e LLM_BASE_URL)         && info "LLM_BASE_URL:          ${LLM_BASE_URL}"
+[[ -n "${LLM_TEMPERATURE:-}"      ]] && DOCKER_ARGS+=(-e LLM_TEMPERATURE)      && info "LLM_TEMPERATURE:       ${LLM_TEMPERATURE}"
+[[ -n "${LLM_MAX_OUTPUT_TOKENS:-}"  ]] && DOCKER_ARGS+=(-e LLM_MAX_OUTPUT_TOKENS) && info "LLM_MAX_OUTPUT_TOKENS: ${LLM_MAX_OUTPUT_TOKENS}"
+[[ -n "${SANDBOX_TIMEOUT:-}"      ]] && DOCKER_ARGS+=(-e SANDBOX_TIMEOUT)      && info "SANDBOX_TIMEOUT:       ${SANDBOX_TIMEOUT}"
 
 # ── Lanzar contenedor ──────────────────────────────────────────────────────
 echo ""
@@ -231,8 +287,8 @@ info "════════════════════════�
 info "  Lanzando OpenHands..."
 info "  Imagen:    ${OPENHANDS_IMAGE}"
 info "  Puerto:    ${OPENHANDS_PORT}"
-info "  Config:    ${PROJECT_DIR}/config/config.toml"
-info "  Socket:    ${DOCKER_SOCK_MOUNT}"
+info "  Estado:    ${HOME}/.openhands"
+info "  Daemon:    ${DOCKER_CONN_INFO}"
 info "  Pull:      ${PULL_POLICY}"
 info "═══════════════════════════════════════════════════════════════"
 echo ""
