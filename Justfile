@@ -13,13 +13,13 @@ container_name := "openhands-app"
 
 # ── Tareas ─────────────────────────────────────────────────────────────────
 
-# Lanza OpenHands con secretos cifrados (.env.enc)
-run:
-    @{{scripts_dir}}/run-opendevin.sh
+# Lanza OpenHands con secretos cifrados (.env.enc) — acepta flags extra, ej: just run --no-pull
+run *ARGS:
+    @{{scripts_dir}}/run-opendevin.sh {{ARGS}}
 
-# Lanza OpenHands en modo desarrollo (.env sin cifrar)
-dev:
-    @{{scripts_dir}}/run-opendevin.sh --dev
+# Lanza OpenHands en modo desarrollo (.env sin cifrar) — acepta flags extra, ej: just dev --no-pull
+dev *ARGS:
+    @{{scripts_dir}}/run-opendevin.sh --dev {{ARGS}}
 
 # Cifra .env → .env.enc con sops + age
 encrypt:
